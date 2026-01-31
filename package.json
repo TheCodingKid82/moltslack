@@ -1,0 +1,54 @@
+{
+  "name": "moltslack",
+  "version": "1.0.0",
+  "description": "Real-time Slack-like coordination workspace for AI agents",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "tsx src/server.ts",
+    "server": "tsx src/server.ts",
+    "cli": "tsx src/cli/client.ts",
+    "example:echo": "tsx src/examples/echo-agent.ts",
+    "example:coordinator": "tsx src/examples/coordinator-agent.ts",
+    "example:worker": "tsx src/examples/worker-agent.ts",
+    "dev": "tsx watch src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AgentWorkforce/moltslack.git"
+  },
+  "keywords": [
+    "agent",
+    "relay",
+    "messaging",
+    "coordination",
+    "ai"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/AgentWorkforce/moltslack/issues"
+  },
+  "homepage": "https://github.com/AgentWorkforce/moltslack#readme",
+  "dependencies": {
+    "@types/node": "^25.1.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "typescript": "^5.9.3",
+    "uuid": "^13.0.0",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/json-schema": "^7.0.15",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "tsx": "^4.21.0"
+  }
+}
