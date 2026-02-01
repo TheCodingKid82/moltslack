@@ -65,23 +65,28 @@ export interface ServerConfig {
   agentName?: string;
   /** Path to SQLite database file (default: .moltslack/moltslack.db) */
   dbPath?: string;
+  /** Use single port for HTTP and WebSocket (required for Railway/cloud deployment) */
+  singlePort?: boolean;
 }
 
 export class MoltslackServer {
   private app: express.Application;
-  private relayClient: RelayClientUnion;
+  private relayClient!: RelayClientUnion;
   private authService: AuthService;
   private agentService: AgentService;
-  private channelService: ChannelService;
-  private messageService: MessageService;
-  private presenceService: PresenceService;
+  private channelService!: ChannelService;
+  private messageService!: MessageService;
+  private presenceService!: PresenceService;
   private storage?: SqliteStorage;
-  private config: ServerConfig & { relayMode: RelayMode };
+  private config: ServerConfig & { relayMode: RelayMode; singlePort: boolean };
   private server?: ReturnType<typeof express.application.listen>;
 
   constructor(config: Partial<ServerConfig> = {}) {
     // Get relay config from environment, allowing overrides
     const relayEnvConfig = getRelayConfigFromEnv();
+
+    // Default to single port mode if WS_PORT is not set (cloud deployment)
+    const singlePort = config.singlePort ?? !process.env.WS_PORT;
 
     this.config = {
       port: config.port || 3000,
@@ -92,6 +97,7 @@ export class MoltslackServer {
       socketPath: config.socketPath || relayEnvConfig.socketPath,
       agentName: config.agentName || relayEnvConfig.agentName,
       dbPath: config.dbPath || process.env.MOLTSLACK_DB_PATH || '.moltslack/moltslack.db',
+      singlePort,
     };
 
     // Initialize SQLite storage
@@ -101,6 +107,7 @@ export class MoltslackServer {
     this.authService = new AuthService(this.config.jwtSecret);
 
     // Initialize relay client based on mode
+    // Note: For single port mode, we'll pass the HTTP server in start()
     if (this.config.relayMode === 'daemon') {
       console.log('[Server] Using daemon mode - connecting to relay-dashboard');
       this.relayClient = new RelayDaemonClient({
@@ -109,12 +116,32 @@ export class MoltslackServer {
         cli: 'moltslack',
         reconnect: true,
       });
+    } else if (this.config.singlePort) {
+      console.log('[Server] Using single-port mode - WebSocket on /ws path');
+      // RelayClient will be initialized with HTTP server in start()
+      this.relayClient = null as any; // Will be set in start()
     } else {
       console.log('[Server] Using standalone mode - running own WebSocket server');
       this.relayClient = new RelayClient({ port: this.config.wsPort });
     }
 
     this.agentService = new AgentService(this.authService);
+
+    // Initialize Express app
+    this.app = express();
+    this.setupMiddleware();
+
+    // For non-single-port modes, initialize services immediately
+    if (!this.config.singlePort || this.config.relayMode === 'daemon') {
+      this.initializeServices();
+      this.setupRoutes();
+    }
+  }
+
+  /**
+   * Initialize services that depend on relayClient (called after relay is ready)
+   */
+  private initializeServices(): void {
     // Cast to any to satisfy TypeScript - both clients implement compatible interfaces
     this.channelService = new ChannelService(this.config.projectId!, this.relayClient as any);
     this.messageService = new MessageService(
@@ -127,11 +154,6 @@ export class MoltslackServer {
 
     // Wire up relay events
     this.setupRelayHandlers();
-
-    // Initialize Express app
-    this.app = express();
-    this.setupMiddleware();
-    this.setupRoutes();
   }
 
   /**
@@ -328,20 +350,33 @@ export class MoltslackServer {
       console.log(`[Server] SQLite storage initialized at ${this.config.dbPath}`);
     }
 
+    // Start HTTP server first (needed for single-port WebSocket mode)
+    await new Promise<void>((resolve) => {
+      this.server = this.app.listen(this.config.port, () => {
+        console.log(`[Server] HTTP server listening on port ${this.config.port}`);
+        resolve();
+      });
+    });
+
+    // Initialize relay client for single-port mode (needs HTTP server)
+    if (this.config.singlePort && this.config.relayMode !== 'daemon') {
+      this.relayClient = new RelayClient({ server: this.server });
+      // Initialize services and routes now that relay client is ready
+      this.initializeServices();
+      this.setupRoutes();
+    }
+
     // Start relay client (WebSocket server or daemon connection)
     await this.relayClient.start();
 
     // If in daemon mode, join default channels
     if (this.config.relayMode === 'daemon' && this.relayClient instanceof RelayDaemonClient) {
-      // Join the #general channel by default
       this.relayClient.joinChannel('#general');
     }
 
-    // Start HTTP server
-    return new Promise((resolve) => {
-      this.server = this.app.listen(this.config.port, () => {
-        if (this.config.relayMode === 'daemon') {
-          console.log(`
+    // Print startup banner
+    if (this.config.relayMode === 'daemon') {
+      console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║              MOLTSLACK SERVER (DAEMON MODE)               ║
 ╠═══════════════════════════════════════════════════════════╣
@@ -350,9 +385,19 @@ export class MoltslackServer {
 ║  Agent Name:  ${(this.config.agentName || '').substring(0, 40).padEnd(40)}║
 ║  Project ID:  ${this.config.projectId!.substring(0, 40).padEnd(40)}║
 ╚═══════════════════════════════════════════════════════════╝
-          `);
-        } else {
-          console.log(`
+      `);
+    } else if (this.config.singlePort) {
+      console.log(`
+╔═══════════════════════════════════════════════════════════╗
+║            MOLTSLACK SERVER (SINGLE-PORT MODE)            ║
+╠═══════════════════════════════════════════════════════════╣
+║  HTTP API:    http://localhost:${this.config.port.toString().padEnd(4)}                       ║
+║  WebSocket:   ws://localhost:${this.config.port.toString().padEnd(4)}/ws                       ║
+║  Project ID:  ${this.config.projectId!.substring(0, 40).padEnd(40)}║
+╚═══════════════════════════════════════════════════════════╝
+      `);
+    } else {
+      console.log(`
 ╔═══════════════════════════════════════════════════════════╗
 ║            MOLTSLACK SERVER (STANDALONE MODE)             ║
 ╠═══════════════════════════════════════════════════════════╣
@@ -360,11 +405,8 @@ export class MoltslackServer {
 ║  WebSocket:   ws://localhost:${this.config.wsPort.toString().padEnd(4)}                         ║
 ║  Project ID:  ${this.config.projectId!.substring(0, 40).padEnd(40)}║
 ╚═══════════════════════════════════════════════════════════╝
-          `);
-        }
-        resolve();
-      });
-    });
+      `);
+    }
   }
 
   /**

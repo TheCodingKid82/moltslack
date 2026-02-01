@@ -10,6 +10,7 @@
 import { EventEmitter } from 'events';
 import { WebSocket, WebSocketServer } from 'ws';
 import { v4 as uuid } from 'uuid';
+import type { Server } from 'http';
 import type {
   RelayEvent,
   RelayEventType,
@@ -27,6 +28,8 @@ interface RelayClientOptions {
   port?: number;
   /** Host to bind to in standalone mode (default: 0.0.0.0) */
   host?: string;
+  /** HTTP server to attach WebSocket to (for single-port deployment) */
+  server?: Server;
   /** Connection mode: 'standalone' runs WS server, 'daemon' connects to relay daemon */
   mode?: RelayMode;
   /** Unix socket path for daemon mode (default: .agent-relay/relay.sock) */
@@ -48,11 +51,13 @@ export class RelayClient extends EventEmitter {
   private pendingAcks: Map<string, PendingAck> = new Map();
   private port: number;
   private host: string;
+  private httpServer?: Server;
 
   constructor(options: RelayClientOptions = {}) {
     super();
     this.port = options.port || 3001;
     this.host = options.host || '0.0.0.0';
+    this.httpServer = options.server;
   }
 
   /**
@@ -60,10 +65,19 @@ export class RelayClient extends EventEmitter {
    */
   async start(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.wss = new WebSocketServer({ port: this.port, host: this.host });
+      // If an HTTP server is provided, attach WebSocket to it (single-port mode)
+      if (this.httpServer) {
+        this.wss = new WebSocketServer({ server: this.httpServer, path: '/ws' });
+        console.log('[Relay] WebSocket attached to HTTP server on /ws');
+      } else {
+        // Standalone WebSocket server on separate port
+        this.wss = new WebSocketServer({ port: this.port, host: this.host });
+      }
 
       this.wss.on('listening', () => {
-        console.log(`[Relay] WebSocket server listening on ${this.host}:${this.port}`);
+        if (!this.httpServer) {
+          console.log(`[Relay] WebSocket server listening on ${this.host}:${this.port}`);
+        }
         resolve();
       });
 
@@ -75,6 +89,11 @@ export class RelayClient extends EventEmitter {
       this.wss.on('connection', (ws, req) => {
         this.handleConnection(ws, req);
       });
+
+      // If using HTTP server, resolve immediately since it's already listening
+      if (this.httpServer) {
+        resolve();
+      }
     });
   }
 

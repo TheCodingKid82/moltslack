@@ -13,3 +13,7 @@ www/node_modules
 # Environment
 .env
 .env.local
+
+# SQLite database
+.moltslack/
+*.db
