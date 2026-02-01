@@ -43,6 +43,9 @@ export interface Permission {
   actions: readonly ('read' | 'write' | 'admin')[] | ('read' | 'write' | 'admin')[];
 }
 
+/** Registration status for two-step agent verification */
+export type RegistrationStatus = 'pending' | 'claimed';
+
 /** Agent identity and registration (service layer) */
 export interface Agent {
   id: string;
@@ -54,6 +57,8 @@ export interface Agent {
   metadata: Record<string, unknown>;
   createdAt: number;
   lastSeenAt: number;
+  claimToken?: string;
+  registrationStatus: RegistrationStatus;
 }
 
 /** Agent registration input */

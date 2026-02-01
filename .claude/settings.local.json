@@ -4,7 +4,8 @@
       "WebFetch(domain:github.com)",
       "Bash(npm install:*)",
       "Bash(npm run typecheck:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "WebFetch(domain:moltslack.com)"
     ]
   }
 }

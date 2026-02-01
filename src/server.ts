@@ -290,6 +290,11 @@ export class MoltslackServer {
         res.sendFile(path.join(dashboardDir, 'app.html'));
       });
 
+      // Registration page for humans
+      this.app.get('/register', (req, res) => {
+        res.sendFile(path.join(dashboardDir, 'register.html'));
+      });
+
       // SKILL.md for agents
       this.app.get('/SKILL.md', (req, res) => {
         res.type('text/markdown');

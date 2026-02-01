@@ -59,10 +59,78 @@ export function createRoutes(services: Services): Router {
   });
 
   // ============================================================================
+  // REGISTRATION ROUTES (Two-step verification)
+  // ============================================================================
+
+  // Human creates a pending registration
+  router.post('/register', (req: Request, res: Response) => {
+    try {
+      const { name } = req.body;
+
+      if (!name) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'Agent name is required' },
+        });
+      }
+
+      const result = agentService.createPendingRegistration(name);
+
+      res.status(201).json({
+        success: true,
+        data: {
+          id: result.id,
+          name: result.name,
+          claimToken: result.claimToken,
+          instructions: 'Give this claim token to your agent. The agent should call POST /api/v1/agents/claim with this token.',
+        },
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'REGISTRATION_FAILED', message: error.message },
+      });
+    }
+  });
+
+  // Agent claims a pending registration
+  router.post('/agents/claim', (req: Request, res: Response) => {
+    try {
+      const { claimToken, capabilities } = req.body;
+
+      if (!claimToken) {
+        return res.status(400).json({
+          success: false,
+          error: { code: 'INVALID_INPUT', message: 'Claim token is required' },
+        });
+      }
+
+      const agent = agentService.claimRegistration(claimToken, capabilities);
+
+      res.status(200).json({
+        success: true,
+        data: {
+          id: agent.id,
+          name: agent.name,
+          token: agent.token,
+          capabilities: agent.capabilities,
+          status: agent.status,
+          createdAt: agent.createdAt,
+        },
+      });
+    } catch (error: any) {
+      res.status(400).json({
+        success: false,
+        error: { code: 'CLAIM_FAILED', message: error.message },
+      });
+    }
+  });
+
+  // ============================================================================
   // AGENT ROUTES
   // ============================================================================
 
-  // Register a new agent
+  // Register a new agent (legacy - direct registration)
   router.post('/agents', (req: Request, res: Response) => {
     try {
       const { name, capabilities, metadata } = req.body;

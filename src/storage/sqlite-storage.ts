@@ -22,6 +22,8 @@ export interface StoredAgent {
   metadata: Record<string, unknown>;
   createdAt: number;
   lastSeenAt: number;
+  claimToken?: string;
+  registrationStatus: 'pending' | 'claimed';
 }
 
 /**
@@ -245,10 +247,13 @@ export class SqliteStorage {
         metadata TEXT,
         last_seen_at INTEGER,
         created_at INTEGER NOT NULL,
-        token TEXT
+        token TEXT,
+        claim_token TEXT,
+        registration_status TEXT NOT NULL DEFAULT 'claimed'
       );
       CREATE INDEX IF NOT EXISTS idx_agents_name ON agents (name);
       CREATE INDEX IF NOT EXISTS idx_agents_status ON agents (status);
+      CREATE INDEX IF NOT EXISTS idx_agents_claim_token ON agents (claim_token);
     `);
 
     // Channels table
@@ -304,8 +309,8 @@ export class SqliteStorage {
 
     this.insertAgentStmt = this.db.prepare(`
       INSERT OR REPLACE INTO agents
-      (id, name, capabilities, permissions, status, metadata, last_seen_at, created_at, token)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, name, capabilities, permissions, status, metadata, last_seen_at, created_at, token, claim_token, registration_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     this.insertChannelStmt = this.db.prepare(`
@@ -463,7 +468,9 @@ export class SqliteStorage {
       JSON.stringify(agent.metadata || {}),
       agent.lastSeenAt ?? null,
       agent.createdAt ?? Date.now(),
-      agent.token ?? null
+      agent.token ?? null,
+      agent.claimToken ?? null,
+      agent.registrationStatus ?? 'claimed'
     );
   }
 
@@ -482,6 +489,15 @@ export class SqliteStorage {
     }
 
     const row = this.db.prepare('SELECT * FROM agents WHERE name = ?').get(name);
+    return row ? this.rowToAgent(row) : null;
+  }
+
+  async getAgentByClaimToken(claimToken: string): Promise<StoredAgent | null> {
+    if (!this.db) {
+      throw new Error('SqliteStorage not initialized');
+    }
+
+    const row = this.db.prepare('SELECT * FROM agents WHERE claim_token = ?').get(claimToken);
     return row ? this.rowToAgent(row) : null;
   }
 
@@ -522,6 +538,8 @@ export class SqliteStorage {
       lastSeenAt: row.last_seen_at ?? 0,
       createdAt: row.created_at,
       token: row.token ?? undefined,
+      claimToken: row.claim_token ?? undefined,
+      registrationStatus: row.registration_status ?? 'claimed',
     };
   }
 

@@ -3,18 +3,26 @@
  */
 
 import { v4 as uuid } from 'uuid';
+import crypto from 'crypto';
 import type {
   Agent,
   AgentRegistration,
   PresenceStatus,
   Permission,
+  RegistrationStatus,
 } from '../models/types.js';
 import { AuthService } from './auth-service.js';
 import { track } from '../analytics/posthog.js';
 
+/** Generate a random claim token */
+function generateClaimToken(): string {
+  return crypto.randomBytes(16).toString('hex');
+}
+
 export class AgentService {
   private agents: Map<string, Agent> = new Map();
   private nameIndex: Map<string, string> = new Map(); // name -> id
+  private claimTokenIndex: Map<string, string> = new Map(); // claimToken -> id
   private authService: AuthService;
 
   constructor(authService: AuthService) {
@@ -22,7 +30,7 @@ export class AgentService {
   }
 
   /**
-   * Register a new agent
+   * Register a new agent (direct registration - legacy)
    */
   register(registration: AgentRegistration): Agent {
     // Check for duplicate name
@@ -43,6 +51,7 @@ export class AgentService {
       metadata: registration.metadata || {},
       createdAt: Date.now(),
       lastSeenAt: Date.now(),
+      registrationStatus: 'claimed',
     };
 
     // Generate token
@@ -57,6 +66,86 @@ export class AgentService {
 
     console.log(`[AgentService] Registered agent: ${agent.name} (${id})`);
     return agent;
+  }
+
+  /**
+   * Create a pending registration (human-initiated)
+   * Returns a claim token that must be used by the agent to complete registration
+   */
+  createPendingRegistration(name: string): { id: string; name: string; claimToken: string } {
+    // Check for duplicate name
+    if (this.nameIndex.has(name)) {
+      throw new Error(`Agent with name "${name}" already exists`);
+    }
+
+    const id = `agent-${uuid()}`;
+    const claimToken = generateClaimToken();
+    const permissions = this.authService.createDefaultPermissions();
+
+    const agent: Agent = {
+      id,
+      name,
+      token: '', // Will be set when claimed
+      capabilities: [],
+      permissions,
+      status: 'offline',
+      metadata: {},
+      createdAt: Date.now(),
+      lastSeenAt: Date.now(),
+      claimToken,
+      registrationStatus: 'pending',
+    };
+
+    // Store agent
+    this.agents.set(id, agent);
+    this.nameIndex.set(name, id);
+    this.claimTokenIndex.set(claimToken, id);
+
+    console.log(`[AgentService] Created pending registration: ${name} (${id})`);
+    return { id, name, claimToken };
+  }
+
+  /**
+   * Claim a pending registration (agent-initiated)
+   * Agent provides the claim token to complete registration and receive auth token
+   */
+  claimRegistration(claimToken: string, capabilities?: string[]): Agent {
+    const id = this.claimTokenIndex.get(claimToken);
+    if (!id) {
+      throw new Error('Invalid or expired claim token');
+    }
+
+    const agent = this.agents.get(id);
+    if (!agent) {
+      throw new Error('Agent not found');
+    }
+
+    if (agent.registrationStatus !== 'pending') {
+      throw new Error('Registration already claimed');
+    }
+
+    // Update agent
+    agent.registrationStatus = 'claimed';
+    agent.capabilities = capabilities || [];
+    agent.claimToken = undefined; // Clear claim token
+    agent.token = this.authService.generateToken(agent);
+
+    // Remove from claim token index
+    this.claimTokenIndex.delete(claimToken);
+
+    // Track registration
+    track(id, 'agent_claimed', { agent_id: id, agent_name: agent.name });
+
+    console.log(`[AgentService] Agent claimed registration: ${agent.name} (${id})`);
+    return agent;
+  }
+
+  /**
+   * Get agent by claim token
+   */
+  getByClaimToken(claimToken: string): Agent | undefined {
+    const id = this.claimTokenIndex.get(claimToken);
+    return id ? this.agents.get(id) : undefined;
   }
 
   /**
