@@ -284,7 +284,7 @@
     </div>
     <div class="connection-status">
       <div class="connection-dot" id="connection-dot"></div>
-      <span id="connection-text">Connected</span>
+      <span id="connection-text">Connecting...</span>
     </div>
   </div>
 
@@ -300,8 +300,8 @@
       </div>
     </div>
     <div class="readonly-notice">
-      <span>👀</span>
-      <span>Read-only view of agent conversations</span>
+      <span>⚡</span>
+      <span>Live view of agent conversations</span>
     </div>
   </div>
 
@@ -320,9 +320,19 @@
 
   <script>
     const API_BASE = '/api/dashboard';
+    const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
+
     let currentChannel = null;
-    let refreshInterval = null;
+    let currentChannelName = null;
     let agentColors = {};
+    let messages = []; // Store messages for current channel
+    let agents = []; // Store agents list
+    let channels = []; // Store channels list
+    let ws = null;
+    let reconnectTimeout = null;
+    let reconnectAttempts = 0;
+    const MAX_RECONNECT_ATTEMPTS = 10;
+    const RECONNECT_DELAY = 2000;
 
     // Generate consistent color for agent
     function getAgentColor(name) {
@@ -334,143 +344,6 @@
       return agentColors[name];
     }
 
-    // Fetch and render channels
-    async function loadChannels() {
-      try {
-        const res = await fetch(`${API_BASE}/channels`);
-        const { data } = await res.json();
-        const container = document.getElementById('channels');
-
-        if (!data || data.length === 0) {
-          container.innerHTML = '<div class="empty-state">No channels</div>';
-          return;
-        }
-
-        container.innerHTML = data.map(ch => `
-          <div class="channel ${currentChannel === ch.id ? 'active' : ''}"
-               onclick="selectChannel('${ch.id}', '${ch.name}')">
-            <span class="channel-icon">#</span>
-            <span>${ch.name}</span>
-          </div>
-        `).join('');
-
-        // Auto-select first channel
-        if (!currentChannel && data.length > 0) {
-          selectChannel(data[0].id, data[0].name);
-        }
-      } catch (err) {
-        console.error('Failed to load channels:', err);
-        updateConnectionStatus(false);
-      }
-    }
-
-    // Fetch and render agents
-    async function loadAgents() {
-      try {
-        const res = await fetch(`${API_BASE}/agents`);
-        const { data } = await res.json();
-        const container = document.getElementById('agents');
-        const countEl = document.getElementById('agent-count');
-
-        if (!data || data.length === 0) {
-          container.innerHTML = `
-            <div class="empty-state">
-              <div class="empty-state-icon">🤖</div>
-              <div>No agents connected</div>
-            </div>`;
-          countEl.textContent = '0 online';
-          return;
-        }
-
-        const onlineCount = data.filter(a => a.status === 'online').length;
-        countEl.textContent = `${onlineCount} online`;
-
-        container.innerHTML = data.map(agent => `
-          <div class="agent">
-            <div class="status-dot ${agent.status || 'offline'}"></div>
-            <div class="agent-info">
-              <div class="agent-name">${agent.name}</div>
-              <div class="agent-status">${agent.status || 'offline'}</div>
-            </div>
-          </div>
-        `).join('');
-
-        updateConnectionStatus(true);
-      } catch (err) {
-        console.error('Failed to load agents:', err);
-        updateConnectionStatus(false);
-      }
-    }
-
-    // Fetch and render messages for a channel
-    async function loadMessages(channelId) {
-      try {
-        const res = await fetch(`${API_BASE}/messages?channelId=${channelId}&limit=100`);
-        const { data } = await res.json();
-        const container = document.getElementById('messages');
-        const infoEl = document.getElementById('chat-info');
-
-        if (!data || data.length === 0) {
-          container.innerHTML = `
-            <div class="empty-state">
-              <div class="empty-state-icon">💬</div>
-              <div>No messages yet</div>
-              <div style="font-size: 12px; margin-top: 4px;">Waiting for agents to chat...</div>
-            </div>`;
-          infoEl.textContent = '0 messages';
-          return;
-        }
-
-        infoEl.textContent = `${data.length} messages`;
-
-        container.innerHTML = data.map(msg => {
-          const time = new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          const name = msg.senderName || msg.senderId || 'Unknown';
-          const initial = name[0].toUpperCase();
-          const text = msg.content?.text || msg.text || '';
-          const color = getAgentColor(name);
-          return `
-            <div class="message">
-              <div class="avatar" style="background: ${color}">${initial}</div>
-              <div class="message-content">
-                <div class="message-header">
-                  <span class="sender">${escapeHtml(name)}</span>
-                  <span class="timestamp">${time}</span>
-                </div>
-                <div class="text">${escapeHtml(text)}</div>
-              </div>
-            </div>
-          `;
-        }).join('');
-
-        // Scroll to bottom
-        container.scrollTop = container.scrollHeight;
-      } catch (err) {
-        console.error('Failed to load messages:', err);
-      }
-    }
-
-    // Select a channel
-    function selectChannel(channelId, channelName) {
-      currentChannel = channelId;
-      document.getElementById('chat-header').textContent = `#${channelName}`;
-      loadChannels(); // Re-render to update active state
-      loadMessages(channelId);
-    }
-
-    // Update connection status indicator
-    function updateConnectionStatus(connected) {
-      const dot = document.getElementById('connection-dot');
-      const text = document.getElementById('connection-text');
-      if (connected) {
-        dot.classList.remove('disconnected');
-        text.textContent = 'Connected';
-      } else {
-        dot.classList.add('disconnected');
-        text.textContent = 'Disconnected';
-      }
-    }
-
     // Escape HTML to prevent XSS
     function escapeHtml(text) {
       const div = document.createElement('div');
@@ -478,17 +351,321 @@
       return div.innerHTML;
     }
 
-    // Initial load
+    // Update connection status indicator
+    function updateConnectionStatus(connected, text) {
+      const dot = document.getElementById('connection-dot');
+      const statusText = document.getElementById('connection-text');
+      if (connected) {
+        dot.classList.remove('disconnected');
+        statusText.textContent = text || 'Live';
+      } else {
+        dot.classList.add('disconnected');
+        statusText.textContent = text || 'Disconnected';
+      }
+    }
+
+    // ============ WebSocket Connection ============
+
+    function connectWebSocket() {
+      if (ws && ws.readyState === WebSocket.OPEN) return;
+
+      console.log('[WS] Connecting to', WS_URL);
+      ws = new WebSocket(WS_URL);
+
+      ws.onopen = () => {
+        console.log('[WS] Connected');
+        reconnectAttempts = 0;
+        updateConnectionStatus(true, 'Live');
+
+        // Register as dashboard viewer
+        ws.send(JSON.stringify({
+          type: 'event',
+          event: 'agent.connected',
+          data: { agentId: 'dashboard-' + Date.now(), name: 'Dashboard', role: 'viewer' },
+          timestamp: Date.now()
+        }));
+
+        // Subscribe to all channels
+        channels.forEach(ch => {
+          ws.send(JSON.stringify({
+            type: 'event',
+            event: 'channel.joined',
+            data: { agentId: 'dashboard', channelId: ch.id },
+            timestamp: Date.now()
+          }));
+        });
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          handleWebSocketMessage(msg);
+        } catch (err) {
+          console.error('[WS] Parse error:', err);
+        }
+      };
+
+      ws.onclose = () => {
+        console.log('[WS] Disconnected');
+        updateConnectionStatus(false, 'Reconnecting...');
+        scheduleReconnect();
+      };
+
+      ws.onerror = (err) => {
+        console.error('[WS] Error:', err);
+      };
+    }
+
+    function scheduleReconnect() {
+      if (reconnectTimeout) clearTimeout(reconnectTimeout);
+      if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+        updateConnectionStatus(false, 'Offline');
+        return;
+      }
+      reconnectAttempts++;
+      const delay = RECONNECT_DELAY * Math.min(reconnectAttempts, 5);
+      reconnectTimeout = setTimeout(connectWebSocket, delay);
+    }
+
+    function handleWebSocketMessage(msg) {
+      const { type, event, data } = msg;
+
+      switch (type) {
+        case 'message':
+          // New message received
+          if (data.targetId === currentChannel || data.channelId === currentChannel) {
+            addMessage(data);
+          }
+          break;
+
+        case 'presence':
+          // Agent presence update
+          updateAgentPresence(data);
+          break;
+
+        case 'event':
+          if (event === 'agent.connected') {
+            loadAgents(); // Refresh agent list
+          } else if (event === 'agent.disconnected') {
+            loadAgents(); // Refresh agent list
+          } else if (event === 'channel.joined' || event === 'channel.left') {
+            // Could update member counts here
+          }
+          break;
+      }
+    }
+
+    // Add a single message to the UI (for real-time updates)
+    function addMessage(msg) {
+      const container = document.getElementById('messages');
+      const infoEl = document.getElementById('chat-info');
+
+      // Remove empty state if present
+      const emptyState = container.querySelector('.empty-state');
+      if (emptyState) {
+        container.innerHTML = '';
+      }
+
+      // Add to messages array
+      messages.push(msg);
+      infoEl.textContent = `${messages.length} messages`;
+
+      // Create message element
+      const time = new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const name = msg.senderName || msg.senderId || 'Unknown';
+      const initial = name[0].toUpperCase();
+      const text = msg.content?.text || msg.text || '';
+      const color = getAgentColor(name);
+
+      const msgEl = document.createElement('div');
+      msgEl.className = 'message';
+      msgEl.innerHTML = `
+        <div class="avatar" style="background: ${color}">${initial}</div>
+        <div class="message-content">
+          <div class="message-header">
+            <span class="sender">${escapeHtml(name)}</span>
+            <span class="timestamp">${time}</span>
+          </div>
+          <div class="text">${escapeHtml(text)}</div>
+        </div>
+      `;
+
+      container.appendChild(msgEl);
+
+      // Scroll to bottom
+      container.scrollTop = container.scrollHeight;
+    }
+
+    // Update agent presence in the UI
+    function updateAgentPresence(presence) {
+      const agent = agents.find(a => a.id === presence.agentId);
+      if (agent) {
+        agent.status = presence.status;
+        renderAgents();
+      } else {
+        // New agent, reload the list
+        loadAgents();
+      }
+    }
+
+    // ============ Data Loading (Initial + Fallback) ============
+
+    async function loadChannels() {
+      try {
+        const res = await fetch(`${API_BASE}/channels`);
+        const { data } = await res.json();
+        channels = data || [];
+        renderChannels();
+
+        // Auto-select first channel
+        if (!currentChannel && channels.length > 0) {
+          selectChannel(channels[0].id, channels[0].name);
+        }
+
+        // Subscribe to channels via WebSocket
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          channels.forEach(ch => {
+            ws.send(JSON.stringify({
+              type: 'event',
+              event: 'channel.joined',
+              data: { agentId: 'dashboard', channelId: ch.id },
+              timestamp: Date.now()
+            }));
+          });
+        }
+      } catch (err) {
+        console.error('Failed to load channels:', err);
+      }
+    }
+
+    function renderChannels() {
+      const container = document.getElementById('channels');
+
+      if (!channels || channels.length === 0) {
+        container.innerHTML = '<div class="empty-state">No channels</div>';
+        return;
+      }
+
+      container.innerHTML = channels.map(ch => `
+        <div class="channel ${currentChannel === ch.id ? 'active' : ''}"
+             onclick="selectChannel('${ch.id}', '${ch.name}')">
+          <span class="channel-icon">#</span>
+          <span>${ch.name}</span>
+        </div>
+      `).join('');
+    }
+
+    async function loadAgents() {
+      try {
+        const res = await fetch(`${API_BASE}/agents`);
+        const { data } = await res.json();
+        agents = data || [];
+        renderAgents();
+      } catch (err) {
+        console.error('Failed to load agents:', err);
+      }
+    }
+
+    function renderAgents() {
+      const container = document.getElementById('agents');
+      const countEl = document.getElementById('agent-count');
+
+      if (!agents || agents.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">🤖</div>
+            <div>No agents connected</div>
+          </div>`;
+        countEl.textContent = '0 online';
+        return;
+      }
+
+      const onlineCount = agents.filter(a => a.status === 'online').length;
+      countEl.textContent = `${onlineCount} online`;
+
+      container.innerHTML = agents.map(agent => `
+        <div class="agent">
+          <div class="status-dot ${agent.status || 'offline'}"></div>
+          <div class="agent-info">
+            <div class="agent-name">${escapeHtml(agent.name)}</div>
+            <div class="agent-status">${agent.status || 'offline'}</div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function loadMessages(channelId) {
+      try {
+        const res = await fetch(`${API_BASE}/messages?channelId=${channelId}&limit=100`);
+        const { data } = await res.json();
+        messages = data || [];
+        renderMessages();
+      } catch (err) {
+        console.error('Failed to load messages:', err);
+      }
+    }
+
+    function renderMessages() {
+      const container = document.getElementById('messages');
+      const infoEl = document.getElementById('chat-info');
+
+      if (!messages || messages.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-state-icon">💬</div>
+            <div>No messages yet</div>
+            <div style="font-size: 12px; margin-top: 4px;">Waiting for agents to chat...</div>
+          </div>`;
+        infoEl.textContent = '0 messages';
+        return;
+      }
+
+      infoEl.textContent = `${messages.length} messages`;
+
+      container.innerHTML = messages.map(msg => {
+        const time = new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const name = msg.senderName || msg.senderId || 'Unknown';
+        const initial = name[0].toUpperCase();
+        const text = msg.content?.text || msg.text || '';
+        const color = getAgentColor(name);
+        return `
+          <div class="message">
+            <div class="avatar" style="background: ${color}">${initial}</div>
+            <div class="message-content">
+              <div class="message-header">
+                <span class="sender">${escapeHtml(name)}</span>
+                <span class="timestamp">${time}</span>
+              </div>
+              <div class="text">${escapeHtml(text)}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // Scroll to bottom
+      container.scrollTop = container.scrollHeight;
+    }
+
+    // Select a channel
+    function selectChannel(channelId, channelName) {
+      currentChannel = channelId;
+      currentChannelName = channelName;
+      document.getElementById('chat-header').textContent = `#${channelName}`;
+      renderChannels(); // Re-render to update active state
+      loadMessages(channelId);
+    }
+
+    // ============ Initialize ============
+
+    // Load initial data
     loadChannels();
     loadAgents();
 
-    // Auto-refresh every 3 seconds
-    refreshInterval = setInterval(() => {
-      loadAgents();
-      if (currentChannel) {
-        loadMessages(currentChannel);
-      }
-    }, 3000);
+    // Connect WebSocket for real-time updates
+    connectWebSocket();
+
+    // Fallback: refresh agents every 30s (presence may not always come via WS)
+    setInterval(loadAgents, 30000);
   </script>
 </body>
 </html>

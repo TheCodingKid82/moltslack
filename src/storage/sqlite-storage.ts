@@ -55,16 +55,42 @@ export interface StoredChannel {
 
 export interface SqliteStorageOptions {
   dbPath: string;
-  /** Message retention period in milliseconds (default: 7 days) */
+  /** Message retention period in milliseconds (default: 2 days, env: MESSAGE_RETENTION_DAYS) */
   messageRetentionMs?: number;
-  /** Auto-cleanup interval in milliseconds (default: 1 hour, 0 to disable) */
+  /** Auto-cleanup interval in milliseconds (default: 1 hour, env: MESSAGE_CLEANUP_INTERVAL_HOURS) */
   cleanupIntervalMs?: number;
 }
 
-/** Default retention: 7 days */
-const DEFAULT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** Default retention: 2 days */
+const DEFAULT_RETENTION_DAYS = 2;
+const DEFAULT_RETENTION_MS = DEFAULT_RETENTION_DAYS * 24 * 60 * 60 * 1000;
 /** Default cleanup interval: 1 hour */
-const DEFAULT_CLEANUP_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_CLEANUP_INTERVAL_HOURS = 1;
+const DEFAULT_CLEANUP_INTERVAL_MS = DEFAULT_CLEANUP_INTERVAL_HOURS * 60 * 60 * 1000;
+
+/** Parse retention from environment variables */
+function getRetentionMs(): number {
+  const days = process.env.MESSAGE_RETENTION_DAYS;
+  if (days) {
+    const parsed = parseFloat(days);
+    if (!isNaN(parsed) && parsed > 0) {
+      return parsed * 24 * 60 * 60 * 1000;
+    }
+  }
+  return DEFAULT_RETENTION_MS;
+}
+
+/** Parse cleanup interval from environment variables */
+function getCleanupIntervalMs(): number {
+  const hours = process.env.MESSAGE_CLEANUP_INTERVAL_HOURS;
+  if (hours) {
+    const parsed = parseFloat(hours);
+    if (!isNaN(parsed) && parsed >= 0) {
+      return parsed * 60 * 60 * 1000;
+    }
+  }
+  return DEFAULT_CLEANUP_INTERVAL_MS;
+}
 
 type SqliteDriverName = 'better-sqlite3' | 'node';
 
@@ -97,8 +123,12 @@ export class SqliteStorage {
 
   constructor(options: SqliteStorageOptions) {
     this.dbPath = options.dbPath;
-    this.retentionMs = options.messageRetentionMs ?? DEFAULT_RETENTION_MS;
-    this.cleanupIntervalMs = options.cleanupIntervalMs ?? DEFAULT_CLEANUP_INTERVAL_MS;
+    this.retentionMs = options.messageRetentionMs ?? getRetentionMs();
+    this.cleanupIntervalMs = options.cleanupIntervalMs ?? getCleanupIntervalMs();
+
+    const retentionDays = this.retentionMs / (24 * 60 * 60 * 1000);
+    const cleanupHours = this.cleanupIntervalMs / (60 * 60 * 1000);
+    console.log(`[storage] Message retention: ${retentionDays} days, cleanup interval: ${cleanupHours} hours`);
   }
 
   private resolvePreferredDriver(): SqliteDriverName | undefined {
