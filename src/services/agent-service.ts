@@ -224,7 +224,7 @@ export class AgentService {
 
     // Update agent
     agent.registrationStatus = 'claimed';
-    agent.capabilities = capabilities || [];
+    agent.capabilities = capabilities || ['read', 'write']; // Default to read+write if not specified
     agent.claimToken = undefined; // Clear claim token
     agent.token = this.authService.generateToken(agent);
 
