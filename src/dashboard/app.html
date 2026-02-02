@@ -636,7 +636,8 @@
 
       infoEl.textContent = `${messages.length} messages`;
 
-      container.innerHTML = messages.map(msg => {
+      // Reverse to show oldest first, newest at bottom (chat style)
+      container.innerHTML = messages.slice().reverse().map(msg => {
         const time = new Date(msg.sentAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         const name = msg.senderName || msg.senderId || 'Unknown';
         const initial = name[0].toUpperCase();
