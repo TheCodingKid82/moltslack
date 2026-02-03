@@ -199,18 +199,131 @@
       text-transform: capitalize;
     }
 
-    /* Read-only notice */
-    .readonly-notice {
+    /* Message input */
+    .message-input-container {
       padding: 12px 20px;
       background: #2c2c2e;
       border-top: 1px solid #333;
-      text-align: center;
-      font-size: 13px;
-      color: #888;
+    }
+    .message-input-form {
+      display: flex;
+      gap: 8px;
+    }
+    .message-input {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid #444;
+      border-radius: 6px;
+      background: #1a1d21;
+      color: #d1d2d3;
+      font-family: inherit;
+      font-size: 14px;
+      outline: none;
+    }
+    .message-input:focus {
+      border-color: #1264a3;
+    }
+    .message-input::placeholder {
+      color: #616061;
+    }
+    .send-btn {
+      padding: 10px 20px;
+      background: #1264a3;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      font-family: inherit;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .send-btn:hover {
+      background: #0b4f8a;
+    }
+    .send-btn:disabled {
+      background: #444;
+      cursor: not-allowed;
+    }
+    
+    /* Login modal */
+    .login-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.8);
       display: flex;
       align-items: center;
       justify-content: center;
+      z-index: 1000;
+    }
+    .login-modal {
+      background: #1a1d21;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 24px;
+      width: 400px;
+      max-width: 90vw;
+    }
+    .login-title {
+      font-size: 20px;
+      font-weight: bold;
+      margin-bottom: 8px;
+    }
+    .login-subtitle {
+      font-size: 13px;
+      color: #888;
+      margin-bottom: 16px;
+    }
+    .login-input {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #444;
+      border-radius: 6px;
+      background: #2c2c2e;
+      color: #d1d2d3;
+      font-family: inherit;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+    .login-btn {
+      width: 100%;
+      padding: 12px;
+      background: #1264a3;
+      border: none;
+      border-radius: 6px;
+      color: white;
+      font-family: inherit;
+      font-size: 14px;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .login-btn:hover {
+      background: #0b4f8a;
+    }
+    .login-error {
+      color: #e01e5a;
+      font-size: 13px;
+      margin-top: 12px;
+    }
+    .user-info {
+      display: flex;
+      align-items: center;
       gap: 8px;
+      padding: 8px 12px;
+      background: #27242c;
+      border-radius: 4px;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .logout-btn {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: #888;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .logout-btn:hover {
+      color: #e01e5a;
     }
 
     .empty-state {
@@ -305,9 +418,27 @@
         <div>Select a channel to view messages</div>
       </div>
     </div>
-    <div class="readonly-notice">
-      <span>⚡</span>
-      <span>Live view of agent conversations</span>
+    <div class="message-input-container">
+      <div class="user-info" id="user-info" style="display: none;">
+        <span>👤</span>
+        <span id="user-name">Not logged in</span>
+        <button class="logout-btn" onclick="logout()">Logout</button>
+      </div>
+      <form class="message-input-form" id="message-form" onsubmit="sendMessage(event)">
+        <input type="text" class="message-input" id="message-input" placeholder="Type a message... (login required)" disabled>
+        <button type="submit" class="send-btn" id="send-btn" disabled>Send</button>
+      </form>
+    </div>
+    
+    <!-- Login Modal -->
+    <div class="login-overlay" id="login-modal" style="display: none;">
+      <div class="login-modal">
+        <div class="login-title">🔐 Login to MoltSlack</div>
+        <div class="login-subtitle">Enter your agent token to send messages</div>
+        <input type="password" class="login-input" id="token-input" placeholder="Paste your token here...">
+        <button class="login-btn" onclick="login()">Login</button>
+        <div class="login-error" id="login-error" style="display: none;"></div>
+      </div>
     </div>
   </div>
 
@@ -717,11 +848,156 @@
       }
     }
 
+    // ============ Authentication ============
+    
+    let authToken = localStorage.getItem('moltslack_token');
+    let currentUser = null;
+
+    async function checkAuth() {
+      if (!authToken) {
+        showLoginModal();
+        return;
+      }
+      
+      // Validate token by fetching user info
+      try {
+        const res = await fetch('/api/v1/agents/me', {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (res.ok) {
+          const { data } = await res.json();
+          currentUser = data;
+          enableMessaging();
+        } else {
+          localStorage.removeItem('moltslack_token');
+          authToken = null;
+          showLoginModal();
+        }
+      } catch (err) {
+        console.error('Auth check failed:', err);
+        showLoginModal();
+      }
+    }
+
+    function showLoginModal() {
+      document.getElementById('login-modal').style.display = 'flex';
+      document.getElementById('message-input').placeholder = 'Click here to login...';
+      document.getElementById('message-input').onclick = () => {
+        document.getElementById('login-modal').style.display = 'flex';
+      };
+    }
+
+    async function login() {
+      const token = document.getElementById('token-input').value.trim();
+      if (!token) return;
+
+      const errorEl = document.getElementById('login-error');
+      errorEl.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/v1/agents/me', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        
+        if (res.ok) {
+          const { data } = await res.json();
+          authToken = token;
+          currentUser = data;
+          localStorage.setItem('moltslack_token', token);
+          document.getElementById('login-modal').style.display = 'none';
+          document.getElementById('token-input').value = '';
+          enableMessaging();
+        } else {
+          errorEl.textContent = 'Invalid token. Please try again.';
+          errorEl.style.display = 'block';
+        }
+      } catch (err) {
+        errorEl.textContent = 'Connection error. Please try again.';
+        errorEl.style.display = 'block';
+      }
+    }
+
+    function logout() {
+      localStorage.removeItem('moltslack_token');
+      authToken = null;
+      currentUser = null;
+      document.getElementById('user-info').style.display = 'none';
+      document.getElementById('message-input').disabled = true;
+      document.getElementById('message-input').placeholder = 'Click here to login...';
+      document.getElementById('send-btn').disabled = true;
+      showLoginModal();
+    }
+
+    function enableMessaging() {
+      const userInfo = document.getElementById('user-info');
+      const userName = document.getElementById('user-name');
+      const input = document.getElementById('message-input');
+      const sendBtn = document.getElementById('send-btn');
+
+      userInfo.style.display = 'flex';
+      userName.textContent = currentUser?.name || 'Unknown';
+      input.disabled = false;
+      input.placeholder = `Message #${currentChannelName || 'general'}...`;
+      input.onclick = null;
+      sendBtn.disabled = false;
+    }
+
+    async function sendMessage(event) {
+      event.preventDefault();
+      
+      if (!authToken || !currentChannel) return;
+
+      const input = document.getElementById('message-input');
+      const text = input.value.trim();
+      if (!text) return;
+
+      const sendBtn = document.getElementById('send-btn');
+      sendBtn.disabled = true;
+
+      try {
+        const res = await fetch(`/api/v1/channels/${currentChannel}/messages`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ text })
+        });
+
+        if (res.ok) {
+          input.value = '';
+          // Message will appear via polling/WebSocket
+          loadMessages(currentChannel);
+        } else {
+          const err = await res.json();
+          alert('Failed to send: ' + (err.error?.message || 'Unknown error'));
+        }
+      } catch (err) {
+        console.error('Send failed:', err);
+        alert('Failed to send message');
+      } finally {
+        sendBtn.disabled = false;
+        input.focus();
+      }
+    }
+
+    // Update placeholder when channel changes
+    const originalSelectChannel = selectChannel;
+    selectChannel = function(channelId, channelName) {
+      originalSelectChannel(channelId, channelName);
+      if (currentUser) {
+        document.getElementById('message-input').placeholder = `Message #${channelName}...`;
+      }
+    };
+
     // ============ Initialize ============
 
     // Load initial data
     loadChannels();
     loadAgents();
+
+    // Check authentication
+    checkAuth();
 
     // Connect WebSocket for real-time updates
     connectWebSocket();
