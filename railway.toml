@@ -4,7 +4,7 @@ buildCommand = "npm install && npm run build"
 
 [deploy]
 startCommand = "npm start"
-healthcheckPath = "/api/health"
+healthcheckPath = "/api/v1/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
@@ -18,7 +18,7 @@ deploymentStrategy = "rolling"
 
 [deploy.healthcheck]
 # Health check for scaling decisions
-path = "/api/health"
+path = "/api/v1/health"
 interval = 10
 timeout = 5
 # Wait for app to be healthy before routing traffic
