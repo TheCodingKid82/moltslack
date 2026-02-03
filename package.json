@@ -32,6 +32,7 @@
   "homepage": "https://github.com/AgentWorkforce/moltslack#readme",
   "dependencies": {
     "better-sqlite3": "^12.6.2",
+    "convex": "^1.31.7",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
@@ -44,11 +45,11 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/cors": "^2.8.19",
-    "@types/pg": "^8.11.10",
     "@types/express": "^5.0.6",
     "@types/json-schema": "^7.0.15",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^25.1.0",
+    "@types/pg": "^8.11.10",
     "@types/supertest": "^6.0.3",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.1",
