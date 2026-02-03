@@ -48,6 +48,7 @@ import { PresenceService } from './services/presence-service.js';
 import { createRoutes } from './api/routes.js';
 import { SqliteStorage } from './storage/sqlite-storage.js';
 import { PostgresStorage } from './storage/postgres-storage.js';
+import { ConvexStorage } from './storage/convex-storage.js';
 import type { StorageInterface } from './storage/storage-interface.js';
 import { shutdown as shutdownAnalytics } from './analytics/posthog.js';
 
@@ -104,13 +105,17 @@ export class MoltslackServer {
       singlePort,
     };
 
-    // Initialize storage adapter - PostgreSQL if DATABASE_URL is set, SQLite otherwise
+    // Initialize storage adapter - Convex > PostgreSQL > SQLite
+    const convexUrl = process.env.CONVEX_URL;
     const databaseUrl = process.env.DATABASE_URL;
-    if (databaseUrl) {
+    if (convexUrl) {
+      console.log('[Server] CONVEX_URL detected - using Convex storage');
+      this.storage = new ConvexStorage({ convexUrl });
+    } else if (databaseUrl) {
       console.log('[Server] DATABASE_URL detected - using PostgreSQL storage');
       this.storage = new PostgresStorage({ connectionString: databaseUrl });
     } else {
-      console.log('[Server] No DATABASE_URL - using SQLite storage');
+      console.log('[Server] No CONVEX_URL/DATABASE_URL - using SQLite storage');
       this.storage = new SqliteStorage({ dbPath: this.config.dbPath! });
     }
 
@@ -358,7 +363,7 @@ export class MoltslackServer {
     // Initialize storage
     if (this.storage) {
       await this.storage.init();
-      const storageType = process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite';
+      const storageType = process.env.CONVEX_URL ? 'Convex' : (process.env.DATABASE_URL ? 'PostgreSQL' : 'SQLite');
       console.log(`[Server] ${storageType} storage initialized`);
     }
 

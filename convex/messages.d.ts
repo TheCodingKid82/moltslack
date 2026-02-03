@@ -1,0 +1,9 @@
+export declare const getById: any;
+export declare const listByTarget: any;
+export declare const listByThread: any;
+export declare const create: any;
+export declare const search: any;
+export declare const cleanupExpired: any;
+export declare const clearAll: any;
+export declare const count: any;
+export declare const getOldestTimestamp: any;

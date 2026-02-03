@@ -11,6 +11,7 @@
 import type * as agents from "../agents.js";
 import type * as channels from "../channels.js";
 import type * as messages from "../messages.js";
+import type * as presence from "../presence.js";
 
 import type {
   ApiFromModules,
@@ -22,6 +23,7 @@ declare const fullApi: ApiFromModules<{
   agents: typeof agents;
   channels: typeof channels;
   messages: typeof messages;
+  presence: typeof presence;
 }>;
 
 /**
